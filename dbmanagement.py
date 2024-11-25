@@ -2,6 +2,7 @@ import requests
 import sqlite3
 import dotenv
 import os
+import time
 from contextlib import contextmanager #look this up if you don't understand in the future
 
 
@@ -29,21 +30,29 @@ def init_db():
         
         conn.execute('''
                    CREATE TABLE IF NOT EXISTS teams(
-                        id INTEGER PRIMARY KEY,
-                        team_name TEXT)
+                        team_name TEXT PRIMARY KEY,
+                        id INTEGER 
+                        )
                     ''')
         
 
         conn.execute('''
                     CREATE TABLE IF NOT EXISTS units(
-                        unit_id INTEGER PRIMARY KEY, 
+                        unit_id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         type TEXT NOT NULL)
-
+ 
                      ''')
+
+        conn.execute('''
+                    CREATE TABLE IF NOT EXISTS positions(
+                        name TEXT UNIQUE,
+                        abbreviation TEXT)
+
+                    ''')
         
         conn.execute(''' 
                     CREATE TABLE IF NOT EXISTS  players(
-                        team_id INTEGER REFERENCES teams(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                        team_id TEXT REFERENCES teams(team_name) ON UPDATE CASCADE ON DELETE CASCADE,
                         player_id INTEGER,
                         first_name TEXT, 
                         last_name TEXT,
@@ -53,94 +62,77 @@ def init_db():
                         age INTEGER,
                         number TEXT,
                         experience INTEGER,
+                        position TEXT,
                         unit TEXT) 
                    ''')
 
         conn.commit()
 
+        #Make a table for different types of stats.
 
-
-def fillInTeamUnitsTable():
-
-
-    url = "https://nfl-api-data.p.rapidapi.com/nfl-player-listing/v1/data"
-
-    querystring = {"id":"22"}
-
-    headers = {
-        "x-rapidapi-key": api_key,
-        "x-rapidapi-host": "nfl-api-data.p.rapidapi.com"
-    }
-
-    response = requests.get(url, headers=headers, params=querystring)
-    
-    if response.status_code == 200:
-
-        response = response.json() # Only need the json response for here on out
-        
-
-        units: list = []
-        
-        for items in response["athletes"]:
-            units.append(items["position"])
-
-        
-        with get_db_connection() as conn:
-           
-            count = 1
-            for unit in units:
-                conn.execute('''
-                                INSERT INTO units (unit_id, type) VALUES(?,?)''', (count,unit))
-                conn.commit()
-                count = count+1
-    else:
-        print("Failed to fetch data from RadidAPI: ", response.status_code, response.text)
 
 
 
 
 # Add the players info into the database
 
+
 def addPlayersToDB():
     
+
     with get_db_connection() as conn:
         teams = conn.execute('''
                      SELECT * FROM teams ''')
 
         for row in teams:
-            url = "https://nfl-api-data.p.rapidapi.com/nfl-team-roster"
+            url = "https://nfl-api-data.p.rapidapi.com/nfl-player-listing/v1/data"
 
-            querystring = {"id":str(row[0])}
+            querystring = {"id":str(row[1])}
 
             headers = {
                 "x-rapidapi-key":api_key,
                 "x-rapidapi-host": "nfl-api-data.p.rapidapi.com"
             }
 
-            response = requests.get(url, headers=headers, params=querystring)
+            response: requests.models.Response = requests.get(url, headers=headers, params=querystring)
 
             if response.status_code == 200:
-                response_data = response.json()
+                
+                response_data: dict = response.json()
 
+                for unit in response_data.get("athletes", []): # returns the value associated with key if exist, if not the default is []
+                    unit_type = unit["position"] #Make sure that these team units are put into the database
 
-                for athlete in response_data.get("athletes", []):
+                    conn.execute(''' INSERT OR IGNORE INTO units (type) VALUES(?)''', (unit_type,))
                     
-                    experience = athlete.get("experience")["years"]
+                    players: list = unit.get("items", []) #Get the list of players
+                    
 
-                    player_data = (row[0],
-                                   athlete.get("id"),
-                                   athlete.get("firstName"),
-                                   athlete.get("lastName"),
-                                   athlete.get("fullName"),
-                                   athlete.get("height"),
-                                   athlete.get("weight"),
-                                   athlete.get("age"),
-                                   athlete.get("jersey"),
-                                   experience, 
-                                   athlete.get("position")
-                                   )
-                                 
-                    conn.execute(''' INSERT INTO players (team_id, 
+                    for player in players:
+                        
+                        # Have to get these now so that we can add them to the player_data tuple 
+                        position_dict: dict = player.get("position", {})
+                        experience_dict: dict = player.get("experience", {}) 
+                        
+                        #Also we need to add all of the postions into the their table in the database
+
+                        conn.execute(''' INSERT OR IGNORE INTO positions (name, abbreviation) VALUES(?,?)''', (position_dict["name"],position_dict["abbreviation"]))
+
+                        player_data = (
+                                        row[0], 
+                                        player.get("id"),
+                                        player.get("firstName"),
+                                        player.get("lastName"),
+                                        player.get("fullName"),
+                                        player.get("height"),
+                                        player.get("weight"),
+                                        player.get("age"),
+                                        player.get("jersey"),
+                                        experience_dict["years"],
+                                        position_dict["abbreviation"],
+                                        unit_type)
+                    
+                        conn.execute(''' INSERT OR IGNORE INTO players (team_id, 
                                                          player_id,
                                                          first_name,
                                                          last_name,
@@ -150,36 +142,29 @@ def addPlayersToDB():
                                                          age,
                                                          number,
                                                          experience,
+                                                          position,
                                                          unit 
-                                                         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)''', player_data)
-                    conn.commit()
+                                                         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''', player_data)
+                        conn.commit()
 
             else:
 
                 print("Failed to fetch data from RadidAPI: ", response.status_code, response.text)
 
-            
-    # Create a database player entry for each player
-
-    
-
-    
-
-
-
-        
-
-
-
-
 
 
 # Create a function gets the players from a specific team
 
+def getTeamPlayers(teamName: str):
 
+    with get_db_connection() as conn:
 
-#Create a function that gets players stats
-
+        players: sqlite3.Cursor = conn.execute("""SELECT player_id, full_name, number, unit, position 
+                            FROM players
+                            WHERE players.team_id = ?
+                            """, (teamName,))
+        for row in players:
+            print(row)
 
 
 def getTeamsFromApi():
@@ -210,9 +195,9 @@ def getTeamsFromApi():
 
             #Put that data into the database
             cursor.execute("""
-                           INSERT INTO teams (id, team_name)
+                           INSERT INTO teams (team_name, id)
                            VALUES(?,?)""",
-                           (idNum, name))
+                           (name, idNum))
         
             conn.commit()
     else:
@@ -226,6 +211,36 @@ def getTeamsFromApi():
 
 
 
+def getPlayersStats(player: str, year: int):
+    pass 
+
+
+def getTeamStats(team: str, year: int):
+    with get_db_connection() as conn:
+        teamName = conn.execute("""
+                                SELECT id FROM teams WHERE team_name = ? """, (team,))
+        teamID = teamName.fetchone()[0]
+
+        url = "https://nfl-api-data.p.rapidapi.com/nfl-team-statistics"
+
+        querystring = {"year":year,"id":teamID}
+
+        headers = {
+            "x-rapidapi-key":api_key,
+            "x-rapidapi-host": "nfl-api-data.p.rapidapi.com"
+        }
+
+        response: requests.models.Response = requests.get(url, headers=headers, params=querystring)
+        
+        if response.status_code == 200:
+           pass 
+
+        else:
+          pass 
+            print("Failed to fetch data from RapidaAPI: ", response.status_code, response.text)
+
+
+
 if __name__ == "__main__":
-    init_db() 
-    addPlayersToDB()
+
+    getTeamStats("Ravens", 2023)
