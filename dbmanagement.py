@@ -2,8 +2,11 @@ import requests
 import sqlite3
 import dotenv
 import os
-import time
+#import time
 from contextlib import contextmanager #look this up if you don't understand in the future
+
+import pandas as pd
+import numpy as np
 
 
 dotenv.load_dotenv("api.env")
@@ -69,6 +72,9 @@ def init_db():
         conn.commit()
 
         #Make a table for different types of stats.
+
+
+
 
 
 
@@ -209,12 +215,6 @@ def getTeamsFromApi():
     #return some of that data so that it satisfies the requirement of being a router endpoint.
     return response.json()
 
-
-
-def getPlayersStats(player: str, year: int):
-    pass 
-
-
 def getTeamStats(team: str, year: int):
     with get_db_connection() as conn:
         teamName = conn.execute("""
@@ -236,11 +236,73 @@ def getTeamStats(team: str, year: int):
            pass 
 
         else:
-          pass 
             print("Failed to fetch data from RapidaAPI: ", response.status_code, response.text)
+
+
+
+
+def getGameLog(player: str):
+    with get_db_connection() as conn:
+        playerID = conn.execute(""" SELECT player_id
+                       FROM players
+                       WHERE full_name = ?""",(player,))
+
+        playerID = playerID.fetchone()[0]
+        url = "https://nfl-api-data.p.rapidapi.com/nfl-ath-gamelog"
+        
+        querystring  = {"id":playerID}
+        
+        headers = {
+                "x-rapidapi-key":api_key,
+                "x-rapidapi-host": "nfl-api-data.p.rapidapi.com"
+            }
+
+        response: requests.models.Response = requests.get(url, headers=headers, params=querystring)
+
+        if response.status_code == 200:
+
+            response_data: dict = response.json()
+            
+            labels = response_data.get("names", [])
+
+            if len(labels) > 0:
+                
+                labels_dict: dict = {i: value for i, value in enumerate(labels)} # Need to get more info such as the 
+                                                                                 # date of the game opponent and result
+                                                                                 # of the game 
+
+            else:
+                print("Failed to retrieve labels")
+                return 
+            
+            # This will be me parsing through the gamelog object... May need to refactor this later 
+            season: list = response_data.get("seasonTypes", [])
+            current_year: dict = season[0]
+            categories: list = current_year.get("categories", [])
+            events: list = categories.get("events", []) # Need to parse this to get the Dataframe that I want
+            totals: list = categories.get("totals", [])
+
+            games_list = []
+            
+            # Get the stats of each game....
+            for event in events:
+                eventID
+
+
+
+            gamelog = pd.DataFrame(columns=labels_dict.values()) # This populates the columns with the label names
+            
+            
+            
+            
+
+        else:
+            print("Falied to fetch data from RapidAPI: ", response.status_code, response.text)
 
 
 
 if __name__ == "__main__":
 
-    getTeamStats("Ravens", 2023)
+    #getTeamStats("Ravens", 2023)
+
+    getGameLog("Lamar Jackson")
